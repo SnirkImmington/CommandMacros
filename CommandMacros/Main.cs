@@ -58,28 +58,31 @@ namespace ChatMacros
 
         #region chat hook
 
-        public void OnChat ( messageBuffer mess, int who, string thetext, System.ComponentModel.HandledEventArgs args )
+        public void OnChat ( messageBuffer mess, int who, string originalMessage, System.ComponentModel.HandledEventArgs args )
         {
             try
             {
                 if (args.Handled) return; // not gonna fnpig around with that
 
-                if (thetext.StartsWith("/") && TShock.Players[who].Group.HasPermission("macro") 
-                && ( thetext.Contains('<') || thetext.Contains('{') ) 
-                && !thetext.StartsWith("/login") && !thetext.StartsWith("/register"))
+                if (originalMessage.StartsWith("/") && TShock.Players[who].Group.HasPermission("macro") 
+                && ( originalMessage.Contains('<') || originalMessage.Contains('{') ) 
+                && !originalMessage.StartsWith("/login") && !originalMessage.StartsWith("/register") 
+                && !originalMessage.StartsWith("/warp")) // not on logging in, not warping
                 {
                     var tsply = TShock.Players[who];
-                    string text = thetext.Remove(0, 1);
 
-                    #region make sure the command exists
+                    string textNoSlash = originalMessage.Remove(0, 1);
 
-                    var parameters = ParseParameters(text);
+                    #region make sure the command exists (remove?)
+
+                    var parameters = ParseParameters(textNoSlash);
+                    Console.WriteLine("Parameters: " + string.Join(" ; ", parameters));
                     var com = Commands.ChatCommands.FirstOrDefault(c => c.Names.Contains(parameters[1].ToLower()));
-
-                    if (com == null || com.CanRun(tsply) 
+                    Console.WriteLine("Command: " + com.Name);
+                    if (com == null || !com.CanRun(tsply) 
                     || ( !com.AllowServer && !tsply.RealPlayer ) 
                     || tsply.AwaitingResponse.ContainsKey(parameters[0]))
-                    { return; } // we will let TShock handle this naturally, allowing other plugins a chance at this as well :)
+                    { Console.WriteLine("Returned."); return; } // we will let TShock handle this naturally, allowing other plugins a chance at this as well :)
 
                     #endregion // this may as well be removed from the non-list part because I don't need it
 
@@ -90,19 +93,19 @@ namespace ChatMacros
                     // this epic layout parses in the macros and then the lists
 
                     #region handle dem macroz
-                    if (text.Contains('<') && text.Contains('>')) // handle the macros
+                    if (textNoSlash.Contains('<') && textNoSlash.Contains('>')) // handle the macros
                     {
                         #region populate PosMacros
-                        for (int total_i = 0; total_i < text.Length; total_i++)
+                        for (int total_i = 0; total_i < textNoSlash.Length; total_i++)
                         {
-                            if (text[total_i] == '<')
+                            if (textNoSlash[total_i] == '<')
                             {
                                 var posmac = "<"; indexes.Add(total_i + 1);
-                                for (int word_i = total_i; word_i < text.Length; word_i++)
+                                for (int word_i = total_i; word_i < textNoSlash.Length; word_i++)
                                 {
-                                    if (text[word_i] != '>') // make the string
+                                    if (textNoSlash[word_i] != '>') // make the string
                                     {
-                                        posmac += text[word_i];
+                                        posmac += textNoSlash[word_i];
                                     }
                                     else
                                     {
@@ -115,6 +118,8 @@ namespace ChatMacros
                             }
                         }
                         #endregion
+
+                        Console.WriteLine("Posmacros: " + string.Join(" ; ", PosMacros));
 
                         var posplrs = new List<TSPlayer>();
 
@@ -482,7 +487,38 @@ namespace ChatMacros
                                 }
                                 #endregion
 
-                                #region default:
+                                #region case "gender":
+                                case "gender":
+                                case "isgender":
+                                {
+                                    bool male = true;
+                                    switch (args_str.ToLower())
+                                    {
+                                        case "male":
+                                        case "boy":
+                                        case "m": break;
+
+                                        case "female":
+                                        case "girl":
+                                        case "f": male = false; break;
+
+                                        default: tsply.SendErrorMessage("Macro <gender(male|female)> - invaild parameter!"); return;
+                                    }
+
+                                    var players = TShock.Players.Where(p => p != null && p.RealPlayer && p.TPlayer.male == male);
+
+                                    if (players.Count() == 0)
+                                    {
+                                        tsply.SendErrorMessage("Macro <gender(male|female)> - no players matched!");
+                                        args.Handled = true; return;
+                                    }
+
+                                    posplrs = players.ToList(); break;
+                                }
+                                #endregion
+
+                                #region default: // not implemented because of possible player warp item name
+                                //default: tsply.SendErrorMessage("No macro \"" + name + "\" exists!"); args.Handled = true; return;
                                 #endregion
                             }
                             #endregion switch
@@ -493,38 +529,41 @@ namespace ChatMacros
                             {
                                 var list = "{" + string.Join(",", posplrs.ConvertAll(p => p.Name)) + "}";
 
-                                text.Replace("<" +PosMacros[pos_i] + ">", list); // yeee budy (2)
+                                textNoSlash.Replace("<" +PosMacros[pos_i] + ">", list); // yeee budy (2)
                             }
 
                             #endregion
                         }
                         #endregion foreach poslist
+
+                        Console.WriteLine("Posplayers " + string.Join(" ; ", posplrs.ConvertAll(c => c.Name)));
                     }
                     #endregion macroz
 
-                    #region handle lists -> macros need to add "{text}"
-                    if (text.Contains('{') && text.Contains('}'))
+                    #region handle lists -> macros that added "{text}"
+                    if (textNoSlash.Contains('{') && textNoSlash.Contains('}'))
                     {
+                        Console.WriteLine("Detected { && }");
                         args.Handled = true; // ohhooo hoh hoooh ooh
 
                         // no mute handler - that's in commands
 
                         int list_start = 0; string list_str = "";
-                        var list_player = new List<TSPlayer>();
+                        var players = new List<TSPlayer>();
                         //  we have the text, we're looking for the list!
 
                         #region get the string
-                        for (int list_i = 0; list_i < text.Length; list_i++)
+                        for (int list_i = 0; list_i < textNoSlash.Length; list_i++)
                         {
-                            if (text[list_i] == '{')
+                            if (textNoSlash[list_i] == '{')
                             {
                                 list_start = list_i + 1;
 
-                                for (int loop_i = list_i+1; loop_i < text.Length; loop_i++)
+                                for (int loop_i = list_i+1; loop_i < textNoSlash.Length; loop_i++)
                                 {
-                                    if (text[list_i] != '}')
+                                    if (textNoSlash[list_i] != '}')
                                     {
-                                        list_str += text[list_i];
+                                        list_str += textNoSlash[list_i];
                                     }
                                     else break;
                                 }
@@ -543,6 +582,8 @@ namespace ChatMacros
                             tsply.SendErrorMessage("List - no players in the list! Use /listhelp for info on lists."); return;
                         }
 
+                        Console.WriteLine("List split: " + string.Join(" ; ", list_split));
+
                         #region check and add players
                         foreach (var str in list_split)
                         {
@@ -552,16 +593,18 @@ namespace ChatMacros
                             {
                                 tsply.SendErrorMessage("List - name - name \"" + str + "\" not a valid player!"); return;
                             }
-                            else list_player.Add(plr[0]);
+                            else players.Add(plr[0]);
                         }
                         #endregion
 
-                        var newcomstring = text.Remove(list_start, list_str.Length);
-                        var newtext = newcomstring.Insert(list_start, "{0}"); // haha string.Format FTWWWW
+                        Console.WriteLine("Players: " + string.Join(" ; ", players.ConvertAll(p => p.Name)));
+
+                        var newcomstring = textNoSlash.Remove(list_start, list_str.Length);
+                        var newtext = newcomstring.Insert(list_start, "{0}"); // Adding the "{0}" into the string to make it worthy
                         var replacestrings = new List<string>(); string playernames = "Players: ";
 
                         #region set up player name for each command string
-                        foreach (var ply in list_player)
+                        foreach (var ply in players)
                         {
                             string replacename = ply.Name;
                             playernames += replacename + " | "; // adds to the logged thing
@@ -570,14 +613,14 @@ namespace ChatMacros
                                 replacename = '"' + replacename + '"';
                             }
 
-                            replacestrings.Add(text.SFormat(replacename));
+                            replacestrings.Add(textNoSlash.SFormat(replacename));
                         }
                         #endregion
 
-                        if (list_player.Count > 1) playernames += "(" + list_player.Count + ")";
+                        if (players.Count > 1) playernames += "(" + players.Count + ")";
 
                         if (com.DoLog)
-                            TShock.Utils.SendLogs("{0} executed [{1}]. {2}".SFormat(tsply.Name, thetext, playernames), Color.Red);
+                            TShock.Utils.SendLogs("{0} executed {1} { {2}".SFormat(tsply.Name, originalMessage, playernames), Color.Red);
 
                         foreach (var comstr in replacestrings)
                         {
@@ -587,10 +630,12 @@ namespace ChatMacros
                     #endregion
                 }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                TShock.Players[who].SendErrorMessage("An error occured while trying do do a macro function, check logs for details."); 
-                args.Handled = true; // honsetly there's nothing else anyone can do may as well stop hendling command....
+                TShock.Players[who].SendErrorMessage("An error occured while trying do do a macro function, check logs for details.");
+                Log.Info("Command Macro exception: " + ex.ToString()); // try to be precise here
+
+                args.Handled = true; // honsetly there's nothing else anyone can do may as well stop handling command....
             }
         }
 
